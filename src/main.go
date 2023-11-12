@@ -1,6 +1,7 @@
 package main
 
 import (
+    "sync"
 	"image"
 	"image/color"
 	"image/png"
@@ -29,15 +30,19 @@ func colorStem(iter int) color.RGBA {
         255}
 }
 
-// Not idea, should use a tone mapping approach instead
+// Note: A tone mapping approach would be better here
+// We are losing information without one
 func addColors(a *color.RGBA, b *color.RGBA) color.RGBA {
     var col color.RGBA
     col.R = min(a.R + b.R, 255)
     col.G = min(a.G + b.G, 255)
     col.B = min(a.B + b.B, 255)
     col.A = min(a.A + b.A, 255)
-    col.G = uint8(float64(col.G) * (1.0 - float64(col.R) / 255.0))
     return col
+}
+
+func filterReduceGreenOnRed(col *color.RGBA) {
+    col.G = uint8(float64(col.G) * (1.0 - float64(col.R) / 255.0))
 }
 
 type DrawData struct {
@@ -111,7 +116,7 @@ func main() {
         XOffset: 200,
         YOffset: 0,
         Width: height, // reversed, image rotated later
-        Height: width, // hack
+        Height: width, // reversed, image rotated later 
         ColorFunc: colorStem,
         Cx: -0.75,
         Cy: 0.11,
@@ -131,18 +136,32 @@ func main() {
         Escape: 1.2,
     }
 
+    var wg sync.WaitGroup
+
     // Draw stem, height and width reversed intentionally
-    drawFractal(height, width, imgStem, &stemData)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        drawFractal(height, width, imgStem, &stemData)
+    }()
 
     // Draw petal
-    drawFractal(width, height, imgPetal, &petalData)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        drawFractal(width, height, imgPetal, &petalData)
+    }()
+
+    wg.Wait()
 
     // Rotate stem and add to petal
     for x:=0; x<width; x++ {
         for y:=0; y<height; y++ {
             col := color.RGBAModel.Convert(imgPetal.At(x, y)).(color.RGBA)
             stemCol := color.RGBAModel.Convert(imgStem.At(y, x)).(color.RGBA)
-            imgPetal.Set(x, y, addColors(&col, &stemCol))
+            combinedCol := addColors(&col, &stemCol)
+            filterReduceGreenOnRed(&combinedCol)
+            imgPetal.Set(x, y, combinedCol)
         }
     }
 
